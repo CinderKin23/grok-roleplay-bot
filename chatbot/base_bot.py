@@ -1,94 +1,76 @@
 """
-Base Bot Class - Core conversational engine
+Base chatbot class with core functionality
 """
 
-import os
+from typing import Optional, List, Dict, Any
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, List
-
+from .character import Character
+from llm.providers import get_llm_provider
+from utils.memory import ConversationMemory
 
 class BaseBot(ABC):
-    """Abstract base class for all bot implementations"""
+    """Base class for all chatbot implementations."""
     
-    def __init__(self, system_prompt: str = ""):
+    def __init__(self, character: Character):
         """
-        Initialize the base bot
+        Initialize base bot.
         
         Args:
-            system_prompt: System-level instructions for the bot
+            character: Character object.
         """
-        self.system_prompt = system_prompt
-        self.llm_provider = self._initialize_llm()
+        self.character = character
+        self.memory = ConversationMemory()
+        self.llm_provider = get_llm_provider()
     
-    def _initialize_llm(self):
-        """Initialize LLM provider based on environment"""
-        provider = os.getenv('LLM_PROVIDER', 'openai').lower()
+    def chat(self, user_message: str) -> str:
+        """
+        Process user message and return response.
         
-        if provider == 'openai':
-            try:
-                import openai
-                api_key = os.getenv('OPENAI_API_KEY')
-                if not api_key:
-                    raise ValueError("OPENAI_API_KEY environment variable not set")
-                openai.api_key = api_key
-                return 'openai'
-            except ImportError:
-                print("⚠️  OpenAI library not found. Install with: pip install openai")
-                return None
+        Args:
+            user_message: User's input message.
         
-        elif provider == 'anthropic':
-            try:
-                import anthropic
-                return 'anthropic'
-            except ImportError:
-                print("⚠️  Anthropic library not found. Install with: pip install anthropic")
-                return None
+        Returns:
+            Bot's response as a string.
+        """
+        # Add user message to memory
+        self.memory.add_message("user", user_message)
         
-        return None
+        # Get conversation context
+        messages = self.memory.get_context()
+        
+        # Get response from LLM
+        response = self.llm_provider.generate(
+            system_prompt=self.character.get_system_prompt(),
+            messages=messages
+        )
+        
+        # Add bot response to memory
+        self.memory.add_message("assistant", response)
+        
+        # Format and return
+        return self.format_response(response)
     
     @abstractmethod
-    def get_response(self, user_input: str, context: Optional[List[Dict]] = None) -> str:
-        """Get bot response to user input
+    def format_response(self, response: str) -> str:
+        """
+        Format the response (to be implemented by subclasses).
         
         Args:
-            user_input: User's message
-            context: Conversation history context
-            
+            response: Raw response from LLM.
+        
         Returns:
-            Bot's response string
+            Formatted response.
         """
         pass
     
-    def _call_openai(self, messages: List[Dict], model: str = "gpt-4-turbo", temperature: float = 0.7) -> str:
-        """Call OpenAI API"""
-        try:
-            import openai
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=500
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            return f"Error calling OpenAI: {str(e)}"
+    def reset_memory(self) -> None:
+        """Clear conversation history."""
+        self.memory.clear()
     
-    def _call_anthropic(self, messages: List[Dict], model: str = "claude-3-opus-20240229", temperature: float = 0.7) -> str:
-        """Call Anthropic API"""
-        try:
-            import anthropic
-            client = anthropic.Anthropic()
-            response = client.messages.create(
-                model=model,
-                max_tokens=500,
-                temperature=temperature,
-                messages=messages
-            )
-            return response.content[0].text
-        except Exception as e:
-            return f"Error calling Anthropic: {str(e)}"
+    def get_character_name(self) -> str:
+        """Get the character's name."""
+        return self.character.name
     
-    def _generate_local_response(self, prompt: str) -> str:
-        """Generate response using local model (Ollama, etc.)
-        Placeholder for local model integration"""
-        return "Local model integration not yet configured. Please set up Ollama or similar."
+    def get_memory_summary(self) -> str:
+        """Get a summary of the conversation memory."""
+        return self.memory.get_summary()
